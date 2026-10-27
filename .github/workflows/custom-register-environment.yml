@@ -21,53 +21,87 @@ on:
         required: false
         default: ""
         type: string
-    secrets:
-      creds:
-        required: true
+
 jobs:
   register-environment:
     runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
-      - name: checkout
-        uses: actions/checkout@v3
-      - name: "Az CLI login"
-        uses: azure/login@v1
+      # Step 1: Checkout repository
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Step 2: Login to Azure using OIDC
+      - name: Login to Azure
+        uses: azure/login@v3
         with:
-          # Azure login can use either Service Principal or OIDC authentication:
-          # 1. Service Principal: Uses client ID, tenant ID, client secret/certificate
-          creds: ${{secrets.creds}}
-          #
-          # 2. OIDC (OpenID Connect): More secure, uses federated identity credentials
-          #    Example:
-          #    client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          #    tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          #    subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          #    enable-oidc: true
-          #
-          # Choose the appropriate method based on your security requirements
-          # client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          # tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          # subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          # Uncomment next line to use OIDC
-          # enable-oidc: true
-      - name: install-extension
-        run: az extension add -n ml -y
-      - name: update-extension
-        run: az extension update -n ml
-      - name: list-extentions
-        run: az extension list
-      - name: create-environment-from-file-with-conda
-        if: ${{ inputs.conda_file != ''}}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Step 3: Verify Azure connection
+      - name: Verify Azure Connection
         run: |
-          az ml environment create --file ${{ github.workspace }}/${{ inputs.environment_file }} --resource-group ${{ inputs.resource_group }} \
-                                --workspace-name ${{ inputs.workspace_name }} --conda-file ${{ github.workspace }}/${{ inputs.conda_file }}
-      - name: create-environment-from-file-without-conda
-        if: ${{ inputs.conda_file == ''}}
+          az account show --output table
+
+      # Step 4: Install Azure ML CLI extension
+      - name: Install Azure ML Extension
         run: |
-          az ml environment create --file ${{ github.workspace }}/${{ inputs.environment_file }} --resource-group ${{ inputs.resource_group }} \
-                                  --workspace-name ${{ inputs.workspace_name }}
-      - name: create-environment-from-image
-        if: ${{ inputs.dockerfile-location != ''}}
+          az extension add --name ml --yes
+
+      # Step 5: Update Azure ML CLI extension
+      - name: Update Azure ML Extension
         run: |
-          az ml environment create --file ${{ github.workspace }}/${{ inputs.environment_file }} --resource-group ${{ inputs.resource_group }} \
-                                  --workspace-name ${{ inputs.workspace_name }} --build-context ${{ github.workspace }}/${{ inputs.dockerfile-location }}
+          az extension update --name ml
+
+      # Step 6: List installed extensions
+      - name: List Azure CLI Extensions
+        run: |
+          az extension list --output table
+
+      # Step 7: Create environment with Docker build context
+      - name: Create Environment - Docker
+        if: ${{ inputs['dockerfile-location'] != '' }}
+        env:
+          ENVIRONMENT_FILE: ${{ inputs.environment_file }}
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          WORKSPACE_NAME: ${{ inputs.workspace_name }}
+          DOCKER_CONTEXT: ${{ inputs['dockerfile-location'] }}
+        run: |
+          az ml environment create \
+            --file "$GITHUB_WORKSPACE/$ENVIRONMENT_FILE" \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$WORKSPACE_NAME" \
+            --build-context "$GITHUB_WORKSPACE/$DOCKER_CONTEXT"
+
+      # Step 8: Create environment with Conda
+      - name: Create Environment - Conda
+        if: ${{ inputs['dockerfile-location'] == '' && inputs.conda_file != '' }}
+        env:
+          ENVIRONMENT_FILE: ${{ inputs.environment_file }}
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          WORKSPACE_NAME: ${{ inputs.workspace_name }}
+          CONDA_FILE: ${{ inputs.conda_file }}
+        run: |
+          az ml environment create \
+            --file "$GITHUB_WORKSPACE/$ENVIRONMENT_FILE" \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$WORKSPACE_NAME" \
+            --conda-file "$GITHUB_WORKSPACE/$CONDA_FILE"
+
+      # Step 9: Create environment from YAML only
+      - name: Create Environment - YAML
+        if: ${{ inputs['dockerfile-location'] == '' && inputs.conda_file == '' }}
+        env:
+          ENVIRONMENT_FILE: ${{ inputs.environment_file }}
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          WORKSPACE_NAME: ${{ inputs.workspace_name }}
+        run: |
+          az ml environment create \
+            --file "$GITHUB_WORKSPACE/$ENVIRONMENT_FILE" \
+            --resource-group "$RESOURCE_GROUP" \
+            --workspace-name "$WORKSPACE_NAME"
