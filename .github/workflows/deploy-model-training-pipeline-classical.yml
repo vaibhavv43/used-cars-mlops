@@ -1,33 +1,39 @@
+
 name: deploy-model-training-pipeline
 
 on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
+  # Step 1: Read Azure infrastructure configuration
   get-config:
-      uses: Azure/mlops-templates/.github/workflows/read-yaml.yml@main
-      with:
-        file_name: config-infra-prod.yml
-  
+    uses: Azure/mlops-templates/.github/workflows/read-yaml.yml@main
+    with:
+      file_name: config-infra-prod.yml
+
+  # Step 2: Create Azure ML compute cluster
   create-compute:
-      needs: get-config
-      uses: ./.github/workflows/custom-create-compute.yml
-      with:
-        cluster_name: cpu-cluster
-        size: Standard_DS11_v2
-        min_instances: 0
-        max_instances: 1
-        cluster_tier: dedicated
-        resource_group: ${{ needs.get-config.outputs.resource_group }}
-        workspace_name: ${{ needs.get-config.outputs.aml_workspace }} 
-      secrets:
-          creds: ${{secrets.AZURE_CREDENTIALS}} 
-        
+    needs: get-config
+    uses: ./.github/workflows/custom-create-compute.yml
+    with:
+      cluster_name: cpu-cluster
+      size: Standard_DS11_v2
+      min_instances: 0
+      max_instances: 1
+      cluster_tier: dedicated
+      resource_group: ${{ needs.get-config.outputs.resource_group }}
+      workspace_name: ${{ needs.get-config.outputs.aml_workspace }}
+    secrets: inherit
+
+  # Step 3: Register Azure ML dataset
   register-dataset:
     needs: get-config
     uses: ./.github/workflows/custom-register-dataset.yml
@@ -36,27 +42,30 @@ jobs:
       workspace_name: ${{ needs.get-config.outputs.aml_workspace }}
       name: used-cars-data
       data_file: mlops/azureml/train/data.yml
-    secrets:
-      creds: ${{secrets.AZURE_CREDENTIALS}}
-  
+    secrets: inherit
+
+  # Step 4: Register Azure ML environment
   register-environment:
-      needs: get-config
-      uses: ./.github/workflows/custom-register-environment.yml
-      with:
-        resource_group: ${{ needs.get-config.outputs.resource_group }}
-        workspace_name: ${{ needs.get-config.outputs.aml_workspace }}     
-        environment_file:  mlops/azureml/train/train-env.yml
-        conda_file: data-science/environment/train-conda.yml
-      secrets:
-          creds: ${{secrets.AZURE_CREDENTIALS}}
-      
+    needs: get-config
+    uses: ./.github/workflows/custom-register-environment.yml
+    with:
+      resource_group: ${{ needs.get-config.outputs.resource_group }}
+      workspace_name: ${{ needs.get-config.outputs.aml_workspace }}
+      environment_file: mlops/azureml/train/train-env.yml
+      conda_file: data-science/environment/train-conda.yml
+    secrets: inherit
+
+  # Step 5: Run Azure ML training pipeline
   run-pipeline:
-      needs: [get-config,register-environment,create-compute,register-dataset]
-      uses: ./.github/workflows/custom-run-pipeline.yml
-      with:
-        resource_group: ${{ needs.get-config.outputs.resource_group }}
-        workspace_name: ${{ needs.get-config.outputs.aml_workspace }}     
-        parameters-file:  mlops/azureml/train/newpipeline.yml
-        job-name: mlops-pipeline
-      secrets:
-          creds: ${{secrets.AZURE_CREDENTIALS}}
+    needs:
+      - get-config
+      - register-environment
+      - create-compute
+      - register-dataset
+    uses: ./.github/workflows/custom-run-pipeline.yml
+    with:
+      resource_group: ${{ needs.get-config.outputs.resource_group }}
+      workspace_name: ${{ needs.get-config.outputs.aml_workspace }}
+      parameters-file: mlops/azureml/train/newpipeline.yml
+      job-name: mlops-pipeline
+    secrets: inherit
